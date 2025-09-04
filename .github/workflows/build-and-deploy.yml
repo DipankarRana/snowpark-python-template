@@ -1,69 +1,43 @@
-name: Deploy Snowpark UDFs and Stored Procs
+name: snowflake-migration-demo
 
+# Controls when the action will run. 
 on:
   push:
     branches:
       - main
-  release:
-    types: [published]
+    paths:
+      - 'deploy/**'
+
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-env:
-  SNOWSQL_ACCOUNT: ${{ secrets.SNOWSQL_ACCOUNT }}
-  SNOWSQL_USER: ${{ secrets.SNOWSQL_USER }}
-  SNOWSQL_PWD: ${{ secrets.SNOWSQL_PWD }}
-  SNOWSQL_DATABASE: ${{ secrets.SNOWSQL_DATABASE }}
-  SNOWSQL_SCHEMA: ${{ secrets.SNOWSQL_SCHEMA }}
-  SNOWSQL_WAREHOUSE: ${{ secrets.SNOWSQL_WAREHOUSE }}
-  ARTIFACT_NAME: python-sources-${{ github.ref_name }}.zip
-
 jobs:
-  build:
+  deploy-snowflake-changes-job:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -el {0}
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Conda
-        uses: conda-incubator/setup-miniconda@v2.2.0
-        with:
-          activate-environment: snowpark
-          environment-file: environment.yml
-
-      - name: Run tests
-        run: python -m pytest 
-      
-      - name: Create deployment artifact
-        run: zip -r ${{ env.ARTIFACT_NAME }} . -x .git/\* 
-      
-      - name: Upload artifact for deployment job
-        uses: actions/upload-artifact@v2
-        with:
-          name: python-sources-${{ github.ref_name }}
-          path: ${{ env.ARTIFACT_NAME }}
-  
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
 
     steps:
-      - uses: actions/checkout@v3
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout repository
+        uses: actions/checkout@v2
 
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v2
+      - name: Use Python 3.8.x
+        uses: actions/setup-python@v2.2.1
         with:
-          name: python-sources-${{ github.ref_name }}
+          python-version: 3.8.x
 
-      - name: Install SnowSQL
+      - name: Run schemachange
+        env:
+          SF_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SF_USERNAME: ${{ secrets.SNOWFLAKE_USERNAME }}
+          SF_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+          SF_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SF_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
         run: |
-          curl -O https://sfc-repo.snowflakecomputing.com/snowsql/bootstrap/1.2/linux_x86_64/snowsql-1.2.24-linux_x86_64.bash
-          SNOWSQL_DEST=~/snowflake SNOWSQL_LOGIN_SHELL=~/.profile bash snowsql-1.2.24-linux_x86_64.bash
-
-      - name: Deploy jobs
-        run: |
-          ~/snowflake/snowsql \
-            -f resources.sql \
-            -o variable_substitution=true \
-            --variable artifact_name=${{ env.ARTIFACT_NAME }}
+          echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+          python --version
+          echo "Step 1: Installing schemachange"
+          pip install schemachange
+          
+          echo "Step 2: Running schemachange"
+          schemachange -f $GITHUB_WORKSPACE/deploy -a $SF_ACCOUNT -u $SF_USERNAME -r $SF_ROLE -w $SF_WAREHOUSE -d $SF_DATABASE -c $SF_DATABASE.SCHEMACHANGE.CHANGE_HISTORY --create-change-history-table
